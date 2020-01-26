@@ -1,0 +1,681 @@
+---
+title: "Analítica de Marketing"
+author: "Fernando Peña"
+output:
+  html_document:
+    df_print: paged
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Práctica de Analítica de Marketing: Selección de Potenciales - campaña seguros
+
+El objetivo de esta práctica es seleccionar un conjunto de clientes que serán el objetivo de la próxima campaña comercial de venta de seguros de ahorro.
+
+En este documento se detallan los pasos para la selección de los clientes objetico de la campaña.
+
+### Bloque de inicialización de librerías
+
+se cargan las librerias ROCR y CaTools mediante los comandos library(ROCR) y library(caTools).
+
+```{r librerias, include=FALSE}
+library(ROCR)
+library(caTools)
+```
+
+Se fija el directorio de trabajo en la carpeta donde están contenidos los ficheros "Campaña Historica Seguro Ahorro.csv" y "Campaña Nueva Seguro Ahorro.csv" mediante el comando setwd("C:/.../") indicando la ruta correcta. EStos ficheros son las fuentes de datos sobre las que vamos a trabajar
+
+```{r setwd, include=FALSE}
+setwd("/home/fernando/Documents/programming/R/analiticaMKT")
+```
+
+### Bloque de carga de datos
+
+Comenzamos con la carga de los datos.
+El primer dataset en un dataframe que llamamos BANK_OLD que incluye información sobre los clientes que han participado en el pasado en una campaña comercial.
+El segundo dataset en un dataframe que llamamos BANK_NEW que incluye información sobre los clientes actuales y de los que queremos saber los potenciales.
+
+```{r cargadatos}
+BANK_OLD=read.csv2("HistoricaSeguroAhorro.csv")
+BANK_NEW=read.csv2("NuevaSeguroAhorro.csv")
+```
+
+### Bloque de revisión básica del dataset y formateo de variables
+
+Comenzamos analizando la estructura de los dataset:
+
+```{r str}
+str(BANK_OLD)
+str(BANK_NEW)
+```
+
+El primer dataset tiene 37.500 registros con 7 variables de información sociodemográfica del cliente: el código de cliente, la categoria de edad, el estado civil, el nivel de estudios, el rango de ingresos, el sexo y una variable que indica si el cliente contrató en la campaña del seguro. 
+El segundo dataset tiene 12.500 registros con 6 variables de información sociodemográfica del cliente: el código de cliente, la categoria de edad, el estado civil, el nivel de estudios, el rango de ingresos y el sexo. En este caso no tenemos ninguna variable que indique si el cliente contrata en la campaña del seguro y es lo que vsmo a tratar de predecir. 
+```{r}
+summary(BANK_OLD)
+summary(BANK_NEW)
+```
+
+Analizamos los primeros 6 registros de los dataset para tener una primera impresión del contenido.
+```{r head}
+head(BANK_OLD)
+head(BANK_NEW)
+```
+
+...y los 6 últimos
+
+```{r tail}
+tail(BANK_OLD)
+tail(BANK_NEW)
+```
+
+Sacamos los estadísticos de las variables para conocer de forma breve características básicas de los datos con los que estamos trabajando.
+
+```{r summary}
+summary(BANK_OLD)
+summary(BANK_NEW)
+```
+
+Para las variables categóricas (factores), que son la mayoría, aparecen los valores con mayor frecuencia. Verificamos que no contienen nulos.
+
+La única variable numérica, CAMP_DEPOSITOS, no debería serlo puesto que es un indicador del éxito o fracaso de la campaña, por lo que realizamos una transformación para adecuar su formato como factor:
+
+```{r transformacion}
+BANK_OLD$CAMP_DEPOSITOS=as.factor(BANK_OLD$CAMP_DEPOSITOS)
+```
+
+Ahora, se vuelven a analizar las características básicas para comprobar que todas las variables tienen el formato adecuado y se revisan los estadísticos de la nueva variable formateada:
+
+```{r transformacion2}
+str(BANK_OLD)
+summary(BANK_OLD)
+```
+
+### Bloque de creación de conjuntos de entrenamiento, validación y test
+
+Sobre el Dataset de datos históricos vamos a construir un modelo que permita la predicción de los clientes potenciales.
+Para poder construir un modelo necesitamos contar con un conjunto de datos de entrenamiento que nos permitan aprender los patrones incluidos en los datos. Para seleccionar entre los modelos y poder asegurar que los patrones aprendidos son generalizables necesitamos valorar nuestros modelos en un conjunto de validación.
+
+Por último debemos contar con un conjunto de test que nos permita establecer la capacidad predictiva del modelo elegido, este conjunto no debe utilizarse durante el proceso de construcción y validación del modelo.
+
+Por este motivo dividimos nuestro conjunto de datos en tres conjuntos: entrenamiento(60%), validación(20%) y test(20%). Para que todo el proceso sea reproducible se ha fijado una semilla mediante el comando set.seed.
+
+Primero se divide el conjunto total en dos conjuntos:
+
+```{r split}
+set.seed(1234) 
+SAMPLE = sample.split(BANK_OLD$CAMP_DEPOSITOS, SplitRatio = .60)
+BANKTrain = subset(BANK_OLD, SAMPLE == TRUE)
+BANKValTest = subset(BANK_OLD, SAMPLE == FALSE)
+```
+
+Y posteriormente se subdivide el segundo conjunto en otros dos:
+
+```{r split2}
+set.seed(1234)
+SAMPLE = sample.split(BANKValTest$CAMP_DEPOSITOS, SplitRatio = .50)
+BANKVal= subset(BANKValTest, SAMPLE == TRUE)
+BANKTest = subset(BANKValTest, SAMPLE == FALSE)
+```
+
+De forma que tenemos 3 conjuntos BankTrain, BankVal y BankTest con 22.500, 7.500 y 7.500 registros respectivamente. 
+
+```{r tamano}
+dim(BANK_OLD)
+dim(BANKTrain)
+dim(BANKVal)
+dim(BANKTest)
+```
+
+El uso del comando sample.split de la librería CaTools nos permite mantener el porcentaje de éxitos por conjunto en el 31,29% aproximadamente como podemos comprobar:
+
+```{r prior}
+table(BANK_OLD$CAMP_DEPOSITOS)
+sum(BANK_OLD$CAMP_DEPOSITOS==1)/length(BANK_OLD$CAMP_DEPOSITOS)
+table(BANKTrain$CAMP_DEPOSITOS)
+prior=sum(BANKTrain$CAMP_DEPOSITOS==1)/length(BANKTrain$CAMP_DEPOSITOS)
+sprintf("prior = %f", prior)
+table(BANKVal$CAMP_DEPOSITOS)
+sum(BANKVal$CAMP_DEPOSITOS==1)/length(BANKVal$CAMP_DEPOSITOS)
+table(BANKTest$CAMP_DEPOSITOS)
+sum(BANKTest$CAMP_DEPOSITOS==1)/length(BANKTest$CAMP_DEPOSITOS)
+```
+```{r}
+length(BANK_OLD$CAMP_DEPOSITOS)
+dim(BANK_OLD$CAMP_DEPOSITOS)
+```
+
+### Bloque de análisis del poder predictivo de las variables
+
+En este bloque vamos a analizar la capacidad predictiva individual univariable de cada variable. Esto nos permite conocer qué factores son los que afectan en la contratación del producto.
+
+Comenzamos mediante un gráfico que nos permite comparar el porcentaje de éxito de la campaña para las diferentes categorías de una variable (barras) y compararlas con el prior del dataset (línea roja). Para ello creamos la siguiente función:
+
+```{r relevancia}
+relevancia=function(Target,VariableCategorica){
+  levels=levels(VariableCategorica)
+  colors=c()
+  for (i in 1:length(levels)){
+    TABLA=table(Target,VariableCategorica==levels[i])
+    chi=chisq.test(TABLA)
+    if (chi$p.value<0.05){
+      colors=c(colors,"green")
+    }else{
+      colors=c(colors,"gray")
+    }
+  }
+  TABLA=table(Target,VariableCategorica)
+  plot=barplot(100*TABLA[2,]/(TABLA[1,]+TABLA[2,]),ylim=c(0,100),col=colors,cex.names=0.6)
+  text(x=plot, y=5+100*TABLA[2,]/(TABLA[1,]+TABLA[2,]),labels=paste(round(100*TABLA[2,]/(TABLA[1,]+TABLA[2,]),2),"%",sep=""))
+  abline(h=100*prior,col="red")
+  TABLA
+}
+```
+
+que evaluada en cada variable categórica CAT_EDAD nos muestra el siguiente resultado:
+
+```{r graphedad}
+relevancia(BANKTrain$CAMP_DEPOSITOS,BANKTrain$CAT_EDAD)
+```
+
+Las barras se colorean en función al test de independencia con respecto al éxito de la campaña para cada categoría respecto al resto, si se rechaza el contraste chi cuadrado de independencia se representa con el color verde mientras que si no hay indicios que permitan rechazar el contraste se represente de color gris, es decir, si es de color verde estamos ante una categoría que presenta un comportamiento diferenciado del resto y si además está por encima de la línea horizontal estaríamos ante una característica que influye en la contratación. 
+En este caso los clientes de edad entre 30 y 40 años tienen más probabilidad de contratar el producto.
+
+También podemos analizar el poder predictivo de las variables categóricas mediante el cálculo del WoE (Weigth of Evidence) de cada categoría y el IV (Information Value) de la variable. Estas métricas son habitualmente utilizadas en Banca y nos informan sobre la capacidad predictiva univariante de las variables (a mayor valor, mayor capacidad predictiva), para ello construimos la función general:
+
+```{r woeiv}
+woe_iv=function(Target,VariableCategorica){
+  Tabla_WOE=table(VariableCategorica,Target)
+  DF_WOE=data.frame(FRACASOS=Tabla_WOE[,1],EXITOS=Tabla_WOE[,2])
+  DF_WOE$EXITOS_PORC=DF_WOE$EXITOS/sum(DF_WOE$EXITOS)
+  DF_WOE$FRACASOS_PORC=DF_WOE$FRACASOS/sum(DF_WOE$FRACASOS)
+  DF_WOE$WOE=log(DF_WOE$EXITOS_PORC/DF_WOE$FRACASOS_PORC)
+  DF_WOE$IV=(DF_WOE$EXITOS_PORC-DF_WOE$FRACASOS_PORC)*DF_WOE$WOE
+  DF_WOE
+}
+```
+
+Aplicando la función a la variable categórica CAT_EDAD, obtenemos:
+
+```{r woeivedad}
+WOE_CAT_EDAD=woe_iv(BANKTrain$CAMP_DEPOSITOS,BANKTrain$CAT_EDAD)
+WOE_CAT_EDAD
+IV_CAT_EDAD=sum(WOE_CAT_EDAD$IV)
+IV_CAT_EDAD
+```
+
+La métrica IV (Information Value) se utiliza para estimar el poder predictivo. Los valores a partir de los cuales se considera que la métrica tiene capacidad débil o fuerte no son ampliamente reconocidos pero utilizaremos algo que siempre es cierto. Si tenemos que comparar el poder predictivo univariante de dos variables, aquella que tenga un IV mayor tendrá mayor capacidad predictiva univariante. Esto nos permite ordenar las variables por poder predictivo y seleccionar aquellas que deberán entrar primero en nuestro modelo.
+
+Pasamos a repetir el mismo ejercicio con todas las variables categóricas:
+
+```{r woeivnivelestudios}
+relevancia(BANKTrain$CAMP_DEPOSITOS,BANKTrain$NIVEL_ESTUDIO)
+WOE_NIVEL_ESTUDIOS=woe_iv(BANKTrain$CAMP_DEPOSITOS,BANKTrain$NIVEL_ESTUDIO)
+WOE_NIVEL_ESTUDIOS
+IV_NIVEL_ESTUDIOS=sum(WOE_NIVEL_ESTUDIOS$IV)
+IV_NIVEL_ESTUDIOS
+
+relevancia(BANKTrain$CAMP_DEPOSITOS,BANKTrain$RANGO_INGRESOS)
+WOE_RANGO_INGRESOS=woe_iv(BANKTrain$CAMP_DEPOSITOS,BANKTrain$RANGO_INGRESOS)
+WOE_RANGO_INGRESOS
+IV_RANGO_INGRESOS=sum(WOE_RANGO_INGRESOS$IV)
+IV_RANGO_INGRESOS
+
+relevancia(BANKTrain$CAMP_DEPOSITOS,BANKTrain$ESTADO_CIVIL)
+WOE_ESTADO_CIVIL=woe_iv(BANKTrain$CAMP_DEPOSITOS,BANKTrain$ESTADO_CIVIL)
+WOE_ESTADO_CIVIL
+IV_ESTADO_CIVIL=sum(WOE_ESTADO_CIVIL$IV)
+IV_ESTADO_CIVIL
+
+relevancia(BANKTrain$CAMP_DEPOSITOS,BANKTrain$SEXO)
+WOE_SEXO=woe_iv(BANKTrain$CAMP_DEPOSITOS,BANKTrain$SEXO)
+WOE_SEXO
+IV_SEXO=sum(WOE_SEXO$IV)
+IV_SEXO
+```
+
+Podemos apreciar como todas las variables tienen columnas verdes, es decir, todas son relevantes. La única categoría que no tiene relevacia es el rango de ingresos entre 600-1000.
+
+Podemos establecer un ranking de capacidad predictiva ordenando las variables en función a su IV:
+
+```{r ivrank}
+IV_RANGO_INGRESOS
+IV_NIVEL_ESTUDIOS
+IV_CAT_EDAD
+IV_ESTADO_CIVIL
+IV_SEXO
+```
+
+Podemos apreciar como la variable categórica Edad es la que aporta una mayor información seguida del nivel de estudios, al menos de forma univariante.
+
+En nuestro caso al tener sólo 5 variables vamos a utilizar todos las variables en la construcción del modelo.
+
+### Bloque de Construcción de Modelos
+
+Se van a construir modelos utilizando la técnicas de regresión logística.
+
+Comenzamos con el modelo más sencillo que incluye una sola variable independiente. Hemos seleccionado la variable CAT_EDAD al ser la de mayor IV.
+
+```{r modelo1}
+modelo1=glm(CAMP_DEPOSITOS~CAT_EDAD, data=BANKTrain[,-1],family=binomial(link="logit"))
+summary(modelo1)
+```
+
+```{r}
+BANKTrain[,-1]
+```
+
+
+Podemos apreciar que hay diferencias significativas y que la categoria base Edad entre 30-40 descataca sobre las demás, tal y como vimos en el gráfico.
+
+Incluyendo una segunda variable dependiente. En este caso la segunda con mayor IV:
+
+```{r modelo2}
+modelo2=glm(CAMP_DEPOSITOS~CAT_EDAD+NIVEL_ESTUDIOS, data=BANKTrain[,-1],family=binomial(link="logit"))
+summary(modelo2)
+```
+
+Se mantienen las diferencias significativas en la variable CAT_EDAD y sobre la variable NIVEL_ESTUDIOS vemos el comportamiento de todas las categorías es distinto al de los clientes con Nivel de estudios de primaria.
+
+Comparando los modelos, el primero tienen un menor AIC (Akaike information criterion) métrica ampliamente aceptada junto con BIC (Bayesian information criterion) para comparar modelos basados en la técnicas de estimación máxima verosimilitud como es el caso de la regresión logística. Como norma general el modelo con menores AIC y BIC es el modelo que mejor se adecua a la información disponible.
+
+Continuamos incluyendo nuevas variables en el modelo, según el valor de su IV:
+
+```{r modelos}
+modelo3=glm(CAMP_DEPOSITOS~CAT_EDAD+NIVEL_ESTUDIOS+SEXO, data=BANKTrain[,-1],family=binomial(link="logit"))
+summary(modelo3)
+modelo4=glm(CAMP_DEPOSITOS~CAT_EDAD+NIVEL_ESTUDIOS+SEXO+ESTADO_CIVIL, data=BANKTrain[,-1],family=binomial(link="logit"))
+summary(modelo4)
+modelo5=glm(CAMP_DEPOSITOS~CAT_EDAD+NIVEL_ESTUDIOS+SEXO+ESTADO_CIVIL+RANGO_INGRESOS, data=BANKTrain[,-1],family=binomial(link="logit"))
+summary(modelo5)
+```
+
+Podemos comprobar en el último modelo que para la variable RANGO_INGRESOS, sus categorias no mejoran la capacidad predictiva del modelo y no debería incluirse.
+
+De hecho si calculamos los AIC y BIC de todos los modelos podemos comprobar que el modelo4 es el que tiene los valores más bajos para ambas métricas por lo que es el que se ajusta mejor a los datos.
+
+```{r aicbic}
+print("AIC")
+AIC(modelo1)
+AIC(modelo2)
+AIC(modelo3)
+AIC(modelo4)
+AIC(modelo5)
+
+print("BIC")
+BIC(modelo1)
+BIC(modelo2)
+BIC(modelo3)
+BIC(modelo4)
+BIC(modelo5)
+```
+
+Las métricas AIC y BIC equilibran la ganancia de información al meter una nueva variable con la pérdida por complicar el modelo de forma que previenen la inclusión de factores que no aporten capacidad predictiva.
+
+Pero dado que se trata de un modelo predictivo, nuestro objetivo no es encontrar el modelo que mejor se ajuste a los datos sino encontrar un modelo que pueda generalizarse y nos permita predecir, por este motivo en el próximo apartado estudiaremos la selección de modelos.
+
+### Bloque de evaluación y selección de modelo.
+
+Para evaluar y seleccionar un modelo vamos a utilizar una métrica ampliamente aceptada en los problemas de clasificación se utilice la técnica que se utilice: AUC (Area Under Curve) o área bajo la curva.
+
+En R podemos calcular el AUC de forma sencilla utlizando el paquete ROCR.
+
+```{r auc1}
+prediccion=predict(modelo1,type="response")
+Pred_auxiliar= prediction(prediccion, BANKTrain$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar, "auc");
+auc_modelo1_train = as.numeric(auc.tmp@y.values)
+auc_modelo1_train
+prediccion=predict(modelo1, newdata=BANKVal,type="response")
+Pred_auxiliar = prediction(prediccion, BANKVal$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar, "auc");
+auc_modelo1_val = as.numeric(auc.tmp@y.values)
+auc_modelo1_val
+```
+
+El AUC es una métrica que toma valores entre 0,5 y 1. Siendo 0,5 el valor que se corresponde con un modelo aleatorio y 1 el valor que se corresponde con un modelo que clasifica perfectamente.
+
+Para el primer modelo vemos que el AUC en entrenamiento 0,65752 es similar al AUC en validación 0,6686505. Esto es importante puesto que nos muestra que el modelo tiene la misma capacidad predictiva en el conjunto en el que se ha entrenado que en otro conjunto del cual no se ha entrenado, confirmando que los patrones aprendidos por el modelo son generales, por lo que no se observa sobreajuste u overfitting, de hecho es algo mejor en el de validación.
+
+Calculamos la métrica AUC para el resto de modelos:
+
+```{r aucs}
+prediccion=predict(modelo2,type="response")
+Pred_auxiliar= prediction(prediccion, BANKTrain$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar, "auc");
+auc_modelo2_train = as.numeric(auc.tmp@y.values)
+prediccion=predict(modelo2, newdata=BANKVal,type="response")
+Pred_auxiliar = prediction(prediccion, BANKVal$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar, "auc");
+auc_modelo2_val = as.numeric(auc.tmp@y.values)
+prediccion=predict(modelo3,type="response")
+Pred_auxiliar= prediction(prediccion, BANKTrain$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar, "auc");
+auc_modelo3_train = as.numeric(auc.tmp@y.values)
+prediccion=predict(modelo3, newdata=BANKVal,type="response")
+Pred_auxiliar = prediction(prediccion, BANKVal$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar, "auc");
+auc_modelo3_val = as.numeric(auc.tmp@y.values)
+prediccion=predict(modelo4,type="response")
+Pred_auxiliar= prediction(prediccion, BANKTrain$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar, "auc");
+auc_modelo4_train = as.numeric(auc.tmp@y.values)
+prediccion=predict(modelo4, newdata=BANKVal,type="response")
+Pred_auxiliar = prediction(prediccion, BANKVal$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar, "auc");
+auc_modelo4_val = as.numeric(auc.tmp@y.values)
+prediccion=predict(modelo5,type="response")
+Pred_auxiliar= prediction(prediccion, BANKTrain$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar, "auc");
+auc_modelo5_train = as.numeric(auc.tmp@y.values)
+prediccion=predict(modelo5, newdata=BANKVal,type="response")
+Pred_auxiliar = prediction(prediccion, BANKVal$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar, "auc");
+auc_modelo5_val = as.numeric(auc.tmp@y.values)
+```
+
+Representamos los resultados:
+
+```{r seleccion, echo=FALSE}
+Modelo_1=c(auc_modelo1_train,auc_modelo1_val)
+Modelo_2=c(auc_modelo2_train,auc_modelo2_val)
+Modelo_3=c(auc_modelo3_train,auc_modelo3_val)
+Modelo_4=c(auc_modelo4_train,auc_modelo4_val)
+Modelo_5=c(auc_modelo5_train,auc_modelo5_val)
+
+A=data.frame(Modelo_1,Modelo_2,Modelo_3,Modelo_4,Modelo_5)
+rownames(A)=c("auc_train","auc_val")
+colnames(A)=c("Modelo1","Modelo2","Modelo3","Modelo4","Modelo5")
+A
+```
+
+Podemos apreciar que el modelo con mayor AUC en validación es el modelo5, aunque no lo es en entrenamiento, por lo que este es el modelo elegido puesto que presenta los mejores resultados en el conjunto de validación. Destaca que los valores entre el modelo4 y el modelo5 no difieren en demasía.
+
+Una vez elegido el modelo5 sólo nos queda evaluar su capacidad y esto se realiza utilizando el conjunto de test que no ha sido utilizado en ninguna parte del proceso de construcción y selección del modelo.
+Voy a comparar con el modelo 2
+
+```{r auctest}
+BANKTest$prediccion5=predict(modelo5, newdata=BANKTest,type="response")
+Pred_auxiliar5 = prediction(BANKTest$prediccion5, BANKTest$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar5, "auc");
+auc_modelo5_test = as.numeric(auc.tmp@y.values)
+auc_modelo5_test
+
+BANKTest$prediccion2=predict(modelo2, newdata=BANKTest,type="response")
+Pred_auxiliar2 = prediction(BANKTest$prediccion2, BANKTest$CAMP_DEPOSITOS, label.ordering = NULL)
+auc.tmp = performance(Pred_auxiliar2, "auc");
+auc_modelo2_test = as.numeric(auc.tmp@y.values)
+auc_modelo2_test
+```
+
+
+En este caso el modelo resultante tiene un AUC de 0,7423794. Gráficamente se puede representar de la siguiente manera para el conjunto de test:
+
+```{r roctrain}
+CURVA_ROC_modelo5_train <- performance(Pred_auxiliar5,"tpr","fpr")
+plot(CURVA_ROC_modelo5_train,colorize=TRUE)
+abline(a=0,b=1,col="black")
+CURVA_ROC_modelo2_train <- performance(Pred_auxiliar2,"tpr","fpr")
+plot(CURVA_ROC_modelo2_train,colorize=TRUE)
+abline(a=0,b=1,col="black")
+```
+
+Otra métrica habitual para representar la capacidad predictiva de un modelo es el Índice de Gini que se puede obtener fácilmente del AUC:
+
+```{r gini}
+GINI_train=2*auc_modelo5_train-1
+GINI_train
+GINI_test=2*auc_modelo5_test-1
+GINI_test
+
+GINI_train=2*auc_modelo2_train-1
+GINI_train
+GINI_test=2*auc_modelo2_test-1
+GINI_test
+```
+
+Como el Índice de Gini es una combinación lineal positiva del AUC, se podría haber realizado la selección de modelos utilizando el Índice de Gini en lugar del AUC.
+
+Para terminar con la valoración del modelo, podemos mostrar la capacidad del modelo de la siguiente manera:
+
+```{r vapacidad}
+mean(as.numeric(BANKTest$CAMP_DEPOSITOS)-1)
+aggregate(BANKTest$prediccion5~BANKTest$CAMP_DEPOSITOS,FUN=mean)
+
+mean(as.numeric(BANKTest$CAMP_DEPOSITOS)-1)
+aggregate(BANKTest$prediccion2~BANKTest$CAMP_DEPOSITOS,FUN=mean)
+```
+
+Como podemos apreciar, el éxito medio de la campaña es un 31,29%. Nuestro modelo está asignando una probabilidad media del 42,67% a aquellos que efectivamente fueron éxito de la campaña y un 26.43% a aquellos que no fueron éxito, por lo que el modelo está discriminando.
+
+Es importante volver a destacar que todas las conclusiones y evaluaciones se están realizando sobre el conjunto de Test que nunca se ha utilizado para construir o seleccionar el modelo.
+
+### Bloque aplicación del modelo
+Aplicamos el modelo5 al segundo dataset, donde tenemos los clientes actuales sobre los que queremos discernir a cuáles les lanzamos la campaña.
+Estos dato los vamos a guardar y seguiremos trabajando sobre los históricos para diferenciar cuáles son los puntos óptimos que nos determinarán los clientes a seleccionar.
+
+
+### COMENTARIO IMPORTANTE:
+
+Pese a que he visto que el modelo5 es el que mejor predice, por cuestiones de aprendizaje personal, voy a a trabajar los datos históricos con el modelo5 y el modelo2 para ver que realmente se optienen datos distintos y que las conclusiones no son iguales.
+
+
+### Bloque de explotación del modelo
+
+El modelo predictivo elegido nos asigna a cada cliente una probabilidad de éxito de la campaña, es decir, los ordena los clientes por su probabilidad de éxito de la campaña. 
+
+Si no tenemos limitación de clientes podríamos plantearnos seleccionar un umbral en función a la probabilidad de éxito. Podríamos poner el 80% como punto que es equivalente al porcentaje de coste por llamada vs beneficio:
+
+```{r confusion}
+ALPHA=0.810
+Confusion_Test5=table(BANKTest$CAMP_DEPOSITOS,BANKTest$prediccion5>=ALPHA)
+Confusion_Test2=table(BANKTest$CAMP_DEPOSITOS,BANKTest$prediccion2>=ALPHA)
+
+Confusion_Test5
+Confusion_Test2
+
+```
+
+Como ya sabiamos de los datos en el modelo2 no tenemos ningún cliente con una probabilidad de acierto mayor al 80%
+En el caso del modelo5 sí tenemos 50 clientes por encima de ese umbral. La realidad nos muestra que el nivel de acierto es algo menor al 80% (39 aciertos sobre 50 intentos), y eso nos supondría que la campaña nos daría pérdidas: 390 euros de ingresos frente a 400 euros de gastos.
+
+### Bloque de selección de umbral como el punto de máxima discriminación
+
+Esta técnica calcula el umbral en el que existe la máxima discriminación, la cuantificación de la discriminación es una métrica que recibe el nombre KS y también es utilizada como métrica de capacidad predictiva de un modelo principalmente en modelos de scoring.
+
+Se utiliza el conjunto de datos de test para hacer los cálculos que luego se trasladarán al dataset de clientes nuevos haciendo al suposicón de un igual comportamiento en ambos casos.
+
+Calculamos el punto de máxima discriminación:
+
+```{r calculoKS}
+BANK_KS5=BANKTest[order(BANKTest$prediccion5, decreasing=TRUE),c("CAMP_DEPOSITOS","prediccion5")]
+BANK_KS5$N=1:length(BANK_KS5$CAMP_DEPOSITOS)
+BANK_KS5$EXITOS_ACUM=cumsum(as.numeric(BANK_KS5$CAMP_DEPOSITOS)-1)
+BANK_KS5$FRACASOS_ACUM=BANK_KS5$N-BANK_KS5$EXITOS_ACUM
+BANK_KS5$EXITOS_TOT=sum(BANK_KS5$CAMP_DEPOSITOS==1)
+BANK_KS5$FRACASOS_TOT=sum(BANK_KS5$CAMP_DEPOSITOS==0)
+BANK_KS5$TOTAL=BANK_KS5$EXITOS_TOT+BANK_KS5$FRACASOS_TOT
+BANK_KS5$TPR=BANK_KS5$EXITOS_ACUM/BANK_KS5$EXITOS_TOT
+BANK_KS5$FPR=BANK_KS5$FRACASOS_ACUM/BANK_KS5$FRACASOS_TOT
+BANK_KS5$DIFF=BANK_KS5$TPR-BANK_KS5$FPR
+plot(BANK_KS5$DIFF, xlab="",ylab="discriminación")
+
+
+BANK_KS2=BANKTest[order(BANKTest$prediccion2, decreasing=TRUE),c("CAMP_DEPOSITOS","prediccion2")]
+BANK_KS2$N=1:length(BANK_KS2$CAMP_DEPOSITOS)
+BANK_KS2$EXITOS_ACUM=cumsum(as.numeric(BANK_KS2$CAMP_DEPOSITOS)-1)
+BANK_KS2$FRACASOS_ACUM=BANK_KS2$N-BANK_KS2$EXITOS_ACUM
+BANK_KS2$EXITOS_TOT=sum(BANK_KS2$CAMP_DEPOSITOS==1)
+BANK_KS2$FRACASOS_TOT=sum(BANK_KS2$CAMP_DEPOSITOS==0)
+BANK_KS2$TOTAL=BANK_KS2$EXITOS_TOT+BANK_KS2$FRACASOS_TOT
+BANK_KS2$TPR=BANK_KS2$EXITOS_ACUM/BANK_KS2$EXITOS_TOT
+BANK_KS2$FPR=BANK_KS2$FRACASOS_ACUM/BANK_KS2$FRACASOS_TOT
+BANK_KS2$DIFF=BANK_KS2$TPR-BANK_KS2$FPR
+plot(BANK_KS2$DIFF, xlab="",ylab="discriminación")
+```
+```{r KS}
+KS5=max(BANK_KS5$DIFF)
+KS5
+
+KS2=max(BANK_KS2$DIFF)
+KS2
+```
+```{r umbralKS}
+umbral5 <- which(BANK_KS5$DIFF==KS5)
+sprintf("umbral5: ")
+umbral5
+
+umbral2 <- which(BANK_KS2$DIFF==KS2)
+sprintf("umbral2: ")
+umbral2
+
+```
+
+
+```{r}
+BANK_KS5[umbral5,c("CAMP_DEPOSITOS","prediccion5")]
+BANK_KS2[umbral2,c("CAMP_DEPOSITOS","prediccion2")]
+```
+
+
+en este caso el umbral seleccionado de máxima discriminación sería 0.3074
+
+### Bloque de selección de umbral como el punto que maximiza el Beneficio de la campaña
+
+Si consideramos un coste por llamada y un beneficio por venta, el siguiente paso es establecer el número de clientes a incluir en la promoción. 
+Como datos significativos indicar que cada llamada a un cliente tiene un coste de 8 euros y la venta de un seguro de ahorro reporta un beneficio de 10 euros
+
+```{r costes}
+costeLlamada=8
+beneficioVenta=10
+```
+
+Podemos definir el beneficio o pérdida que tendrán nuestras acciones
+
+```{r beneficios}
+BANK_KS5$BeneficioTP=beneficioVenta-costeLlamada
+BANK_KS5$BeneficioTN=0
+BANK_KS5$PerdidaFP=-costeLlamada
+BANK_KS5$PerdidaFN=-beneficioVenta
+
+BANK_KS2$BeneficioTP=beneficioVenta-costeLlamada
+BANK_KS2$BeneficioTN=0
+BANK_KS2$PerdidaFP=-costeLlamada
+BANK_KS2$PerdidaFN=-beneficioVenta
+```
+
+Con estos datos podemos calcular el beneficio financiero en función al umbral de corte para seleccionar el punto máximo que nos defina el umbral a considerar
+
+```{r umbralBeneficio}
+BANK_KS5$BeneficioFinan=BANK_KS5$EXITOS_ACUM*BANK_KS5$BeneficioTP+
+  BANK_KS5$FRACASOS_ACUM*BANK_KS5$PerdidaFP
+plot(BANK_KS5$BeneficioFinan,xlab="",ylab="Beneficio Financiero")
+sprintf("beneficio máximo según el modelo5 = %i ", max(BANK_KS5$BeneficioFinan))
+umbral5 <- which(BANK_KS5$BeneficioFinan==max(BANK_KS5$BeneficioFinan))
+sprintf("umbral de selección modelo5 : ")
+umbral5
+
+BANK_KS2$BeneficioFinan=BANK_KS2$EXITOS_ACUM*BANK_KS2$BeneficioTP+
+  BANK_KS2$FRACASOS_ACUM*BANK_KS2$PerdidaFP
+plot(BANK_KS2$BeneficioFinan,xlab="",ylab="Beneficio Financiero")
+sprintf ("beneficio máximo según el modelo2 = %i ", max(BANK_KS2$BeneficioFinan))
+umbral2 <- which(BANK_KS2$BeneficioFinan==max(BANK_KS2$BeneficioFinan))
+sprintf("umbral de selección modelo2 : ")
+umbral2
+
+BANK_KS5[umbral5,c("CAMP_DEPOSITOS","prediccion5")]
+BANK_KS2[umbral2,c("CAMP_DEPOSITOS","prediccion2")]
+```
+
+En este caso tenemos dos puntos máximos por lo que podemos seleccionar uno, vamos aelegir elsegundo que sigue siendo coherente con la asunción inicial de probabilidad de la predicción por encima del 80%, el umbral sería del 0.8354324 y hubiéramos obtenido un beneficio de 4 euros.
+
+NOTA:
+Aunque sabemos que el modelo2 es peor en las predicciones, se comprueba que el beneficio en este caso sería mayor, concretamente tendríamos un beneficio de 8 euros.
+
+
+### Bloque de selección de umbral como el punto que maximiza el coste de oportunidad
+
+Se puede hacer una análisis complememtario y ver cuál es el umbral que maximiza el coste de oportunidad de llamar a un nuevo cliente.
+
+```{r umbralOprotunidad}
+BANK_KS5$Oportunidad=BANK_KS5$EXITOS_ACUM*BANK_KS5$BeneficioTP+
+  (BANK_KS5$EXITOS_TOT-BANK_KS5$EXITOS_ACUM)*BANK_KS5$PerdidaFN+
+  BANK_KS5$FRACASOS_ACUM*BANK_KS5$PerdidaFP+
+  (BANK_KS5$FRACASOS_TOT-BANK_KS5$FRACASOS_ACUM)*BANK_KS5$BeneficioTN
+plot(BANK_KS5$Oportunidad,xlab="",ylab="Beneficio - Coste de Oportunidad")
+max(BANK_KS5$Oportunidad)
+umbral5 <- which(BANK_KS5$Oportunidad==max(BANK_KS5$Oportunidad))
+
+BANK_KS2$Oportunidad=BANK_KS2$EXITOS_ACUM*BANK_KS2$BeneficioTP+
+  (BANK_KS2$EXITOS_TOT-BANK_KS2$EXITOS_ACUM)*BANK_KS2$PerdidaFN+
+  BANK_KS2$FRACASOS_ACUM*BANK_KS2$PerdidaFP+
+  (BANK_KS2$FRACASOS_TOT-BANK_KS2$FRACASOS_ACUM)*BANK_KS2$BeneficioTN
+plot(BANK_KS2$Oportunidad,xlab="",ylab="Beneficio - Coste de Oportunidad")
+max(BANK_KS2$Oportunidad)
+umbral2 <- which(BANK_KS2$Oportunidad==max(BANK_KS2$Oportunidad))
+
+BANK_KS5[umbral5,c("CAMP_DEPOSITOS","prediccion5")]
+BANK_KS2[umbral2,c("CAMP_DEPOSITOS","prediccion2")]
+
+```
+
+En este caso se verifica que los costes de oportunidad son negativos y que no permite optimizar los beneficios de la campaña, por lo tanto vamos a evitar tomar este umbral como referencia.
+
+IMPORTANTE:
+De los anáisis vemos que los efectos de la campaña son muy reducidos y que el beneficio que nos aporta es muy pequeño, en este caso deberíamos estudiar si realmente nos merece la pena lanzar la campaña.
+
+
+### Bloque de aplicación del modelo a los datos de los clientes nuevos.
+
+Como primer paso voy a aplicar el modelo5 a los datos nuevos y le añadiré el valor de predicción.
+
+```{r}
+BANK_NEW$probabilidad=predict(modelo5, newdata=BANK_NEW,type="response")
+
+```
+
+### Bloque de selección de los clientes nuevos a los que se les lanzará la campaña.
+Siguiendo las predicciones hechas con los datos históricos, el umbral sería del 0.8354324, lo más cercano por encima del 80% . Analizando los datos de las predicciones hechas en los datos nuevos vemos que no hay un valor de predicción iguan a ese umbral, pero sí encontramos un valor muy cercano 0.8333508 que es el que se va a tomar como umbral (sigue siendo mayor al 80%).
+A aquellos clientes cuya probabilidad sea igual o mayor a este umbral de 0.8333508 (por cuetiones de los redondeos realmente voy a aplicar 0.8333507) les vamos a asignar un valor potencial de 1, lo que significa que serán los seleccionados como objetivos de las campaña.
+Una vez hecho esto, grabo los clientes en un fichero csv de igual formato que los originales con nombre "Campaña Nueva Resultado Potenciales.csv".
+```{r}
+BANK_NEW$potencial=0
+BANK_NEW$potencial[BANK_NEW$probabilidad>=0.8333507] = 1
+
+write.csv2(BANK_NEW, file = "Campaña Nueva Resultado Potenciales.csv")
+```
+### CONCLUSIÓN.
+El estudio nos dice que deberíamos lanzar la campaña sólo a 97 clientes. Parece que es un objetivo muy pequeño y los beneficios que nos va a reportar son muy escasos. Deberíamos ver cómo se ha diseñado la campaña y tratar de tener unos costes por llamada menores o un mayor margen en el producto ya que con los valores actuales no veo interesante lanzar la campaña para conseguir un beneficio tan pequeño.
+
+
+```{r}
+library(ggplot2)
+```
+```{r}
+BANK_OLD[,2:7]
+```
+```{r}
+# librerias necesarias
+library (mlbench)
+library (caret)
+```
+
+
+
+```{r}
+modelo=glm(CAMP_DEPOSITOS~CAT_EDAD+NIVEL_ESTUDIOS+SEXO+ESTADO_CIVIL+RANGO_INGRESOS, data=BANKTrain[,-1],family=binomial(link="logit"))
+```
+```{r}
+# variables mas importantes
+Rimp <- varImp ( modelo , scale = FALSE )
+print ( Rimp )
+plot ( Rimp )
+```
+```{r}
+Xpca <- princomp(BANKTrain[,-1])
+```
+

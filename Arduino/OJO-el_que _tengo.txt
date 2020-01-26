@@ -1,0 +1,5 @@
+Tenfo el Arduino UNO pero también tenemos los pequeños que son:
+
+KeeYees Pro Micro ATmega 32U4 5V 16MHz
+
+el bootloader hay que hacerlo desde windows
